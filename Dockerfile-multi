@@ -1,29 +1,68 @@
+########################
 # Build Stage
-FROM python:3.9-slim AS builder
+########################
+
+# Use a lightweight Python image to build dependencies
+# WHY: We need pip and build tools to install Python packages
+# HOW: This stage will compile and collect all dependencies
+FROM python:3.9-alpine AS builder
+
+# Set working directory for the build stage
+# WHY: Keeps build artifacts organized in one place
 WORKDIR /app
 
-# Copy dependency file first for efficient caching
+# Copy only the dependency definition file first
+# WHY: Enables Docker layer caching so dependencies are reinstalled only when requirements.txt changes
+# HOW: Docker copies the file from the build context into /app
 COPY requirements.txt .
+
+# Install dependencies into a separate directory
+# WHY: Allows us to copy only required runtime dependencies into the final minimal image
+# HOW: pip installs packages into /app/deps instead of system paths
 RUN pip install --no-cache-dir -r requirements.txt --target=/app/deps
 
-# Copy application source code
-COPY . .
+# Copy application source code after dependencies
+# WHY: Prevents unnecessary dependency rebuilds when code changes
+# HOW: Source files are added to the builder image filesystem
+COPY run.py app.py .
 
-# Final Distroless Stage
+
+########################
+# Final Runtime Stage
+########################
+
+# Use a distroless Python image for runtime
+# WHY: Extremely small image, no shell, no package manager
+# WHY: Reduces attack surface and improves security
+# HOW: Only the Python runtime and required libraries are included
 FROM gcr.io/distroless/python3-debian11
+
+# Set working directory inside the runtime container
+# WHY: Provides a consistent location for app files
+# HOW: Runtime execution happens from /app
 WORKDIR /app
 
-# Copy dependencies from the builder stage
-COPY --from=builder /app/deps /app/deps
+# Copy application source code from the builder stage
+# WHY: Final image needs only the runnable code, nothing extra
+# HOW: Files are transferred directly between stages
 COPY --from=builder /app .
 
-# Set environment variables
+# Ensure Python logs are flushed immediately
+# WHY: Required for proper logging in containers and orchestration systems
+# HOW: Disables output buffering
 ENV PYTHONUNBUFFERED=1
+
+# Add custom dependency directory to Python's module search path
+# WHY: Python must know where to find installed packages
+# HOW: PYTHONPATH extends Python's default import locations
 ENV PYTHONPATH="/app/deps"
 
-# Expose the application port
+# Document the port the application listens on
+# WHY: Helps container platforms understand networking intent
+# HOW: Actual port mapping is handled externally
 EXPOSE 80
 
-# Run the application
+# Define the container startup command
+# WHY: Automatically runs the application when the container starts
+# HOW: Distroless image directly executes the Python script
 CMD ["run.py"]
-
